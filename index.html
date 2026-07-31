@@ -76,8 +76,9 @@
   .focus-controls { display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
   .timer-display { font-size:28px; font-weight:700; margin-top:8px; letter-spacing:0.02em; }
   .week-chart { display:flex; align-items:flex-end; gap:10px; height:180px; padding:10px 0; }
-  .week-bar { flex:1; min-width:24px; border-radius:10px 10px 0 0; background:rgba(37,99,235,0.85); position:relative; display:flex; align-items:flex-end; justify-content:center; color:white; font-size:11px; }
-  .week-bar span { padding:4px 6px; }
+  .week-bar { flex:1; min-width:24px; border-radius:10px 10px 0 0; background:rgba(37,99,235,0.85); position:relative; display:flex; flex-direction:column; justify-content:space-between; color:white; font-size:11px; padding:6px; }
+  .week-bar .bar-value { font-weight:700; font-size:13px; margin-bottom:4px; }
+  .week-bar .bar-label { font-size:10px; line-height:1.1; width:100%; text-align:center; white-space: normal; word-break: break-word; }
   .week-bar-label { margin-top:8px; font-size:12px; text-align:center; color:var(--muted); }
   .bar-label-row { display:grid; grid-template-columns: repeat(7, 1fr); gap:10px; margin-top:6px; }
 
@@ -202,16 +203,19 @@
                   <div class="stats-card">
                     <div class="section-title">Focus Timer</div>
                     <div class="row focus-controls">
-                      <input id="focus-minutes" type="number" min="1" placeholder="Minutes" style="flex:1; padding:8px; border-radius:8px; border:1px solid rgba(0,0,0,0.06);" />
+                      <input id="focus-minutes" type="number" min="1" placeholder="Focus minutes" style="flex:1; padding:8px; border-radius:8px; border:1px solid rgba(0,0,0,0.06);" />
                       <input id="focus-subject" placeholder="Subject" style="flex:1; padding:8px; border-radius:8px; border:1px solid rgba(0,0,0,0.06);" />
+                      <button class="btn-ghost" id="focus-breaks-btn" type="button">Breaks</button>
                     </div>
+                    <div class="muted" id="focus-current-subject" style="margin-top:8px;">Subject: not selected</div>
+                    <div class="muted" id="focus-break-info" style="margin-top:4px;">Breaks: not set</div>
                     <div class="row focus-controls" style="margin-top:10px;">
                       <button class="btn" id="start-focus">Start</button>
+                      <button class="btn-ghost" id="pause-focus">Pause</button>
+                      <button class="btn-ghost" id="break-focus">Break</button>
                       <button class="btn-ghost" id="stop-focus">Stop</button>
-                      <button class="btn-ghost" id="reset-focus">Reset</button>
                     </div>
                     <div class="timer-display" id="focus-timer-display">00:00</div>
-                    <div class="muted" id="focus-timer-status">Ready to start a session</div>
                   </div>
 
                   <div class="stats-card">
@@ -339,6 +343,7 @@
           <div id="weekly-bars" class="week-chart"></div>
           <div class="bar-label-row" id="weekly-days"></div>
           <div id="weekly-comparison" class="muted" style="margin-top:12px;">No weekly data yet</div>
+          <div id="weekly-details" style="margin-top:12px;"></div>
         </div>
 
         <!-- LINKS PAGE -->
@@ -453,6 +458,7 @@ const STORAGE = {
   dailyFocus: 'sg_daily_focus_v1',
   subjectFocus: 'sg_subject_focus_v1'
 };
+const FOCUS_TIMER_STORAGE_KEY = 'sg_focus_timer_state_v1';
 
 let slots = JSON.parse(localStorage.getItem(STORAGE.slots) || "[]");
 let todos = JSON.parse(localStorage.getItem(STORAGE.todos) || "[]");
@@ -468,6 +474,13 @@ let focusEndTime = null;
 let focusRemainingSec = 0;
 let focusTimerInitialMinutes = 0;
 let focusActiveSubject = '';
+let focusTimerMode = 'idle';
+let focusBreakMinutes = 0;
+let focusBreakCount = 0;
+let focusBreaksRemaining = 0;
+let focusRemainingWorkSeconds = 0;
+let focusCurrentPhase = 'idle';
+let focusCurrentSegmentSeconds = 0;
 let stopwatchInterval = null;
 let stopwatchSeconds = 0;
 
@@ -495,7 +508,48 @@ function saveAll(){
   localStorage.setItem(STORAGE.streak, JSON.stringify(streakData));
   localStorage.setItem(STORAGE.dailyFocus, JSON.stringify(dailyFocus));
   localStorage.setItem(STORAGE.subjectFocus, JSON.stringify(subjectFocus));
+  saveFocusTimerState();
   applyStats();
+}
+
+function saveFocusTimerState(){
+  const state = {
+    mode: focusTimerMode,
+    subject: focusActiveSubject,
+    initialMinutes: focusTimerInitialMinutes,
+    remainingSec: focusRemainingSec,
+    endTime: focusEndTime,
+    breakMinutes: focusBreakMinutes,
+    breakCount: focusBreakCount,
+    breaksRemaining: focusBreaksRemaining,
+    remainingWorkSeconds: focusRemainingWorkSeconds,
+    phase: focusCurrentPhase,
+    currentSegmentSeconds: focusCurrentSegmentSeconds
+  };
+  localStorage.setItem(FOCUS_TIMER_STORAGE_KEY, JSON.stringify(state));
+}
+
+function clearFocusTimerState(){
+  localStorage.removeItem(FOCUS_TIMER_STORAGE_KEY);
+}
+
+function restoreFocusTimerState(){
+  try{
+    const saved = JSON.parse(localStorage.getItem(FOCUS_TIMER_STORAGE_KEY) || 'null');
+    if(!saved) return;
+    focusTimerMode = saved.mode || 'idle';
+    focusActiveSubject = saved.subject || '';
+    focusTimerInitialMinutes = saved.initialMinutes || 0;
+    focusBreakMinutes = saved.breakMinutes || 0;
+    focusBreakCount = saved.breakCount || 0;
+    focusBreaksRemaining = saved.breaksRemaining || 0;
+    focusRemainingWorkSeconds = saved.remainingWorkSeconds || 0;
+    focusCurrentPhase = saved.phase || 'idle';
+    focusCurrentSegmentSeconds = saved.currentSegmentSeconds || 0;
+    focusRemainingSec = Math.max(0, saved.remainingSec || 0);
+    focusEndTime = saved.endTime || null;
+    updateFocusTimerDisplay();
+  } catch(e){ console.error('focus timer restore failed', e); }
 }
 
 /* Navigation */
@@ -567,6 +621,22 @@ function formatMinutes(total){
   return hours ? `${hours} hr ${mins} min` : `${mins} min`;
 }
 
+function normalizeSubjectName(subject){
+  const cleaned = String(subject || '').trim();
+  if(!cleaned) return '';
+  return cleaned.toLowerCase();
+}
+
+function formatSubjectName(subject){
+  const cleaned = String(subject || '').trim();
+  if(!cleaned) return '';
+  if(cleaned.length <= 3) return cleaned.toUpperCase();
+  return cleaned
+    .split(/\s+/)
+    .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+    .join(' ');
+}
+
 function formatTimeMMSS(seconds){
   const hours = Math.floor(seconds / 3600);
   const minutes = Math.floor((seconds % 3600) / 60);
@@ -628,10 +698,12 @@ function getTodaySubjectStats(){
 }
 
 function addFocusMinutes(minutes, subject){
+  const normalizedSubject = normalizeSubjectName(subject);
+  if(!normalizedSubject) return;
   const today = todayDate();
   dailyFocus[today] = (dailyFocus[today] || 0) + minutes;
   if(!subjectFocus[today]) subjectFocus[today] = {};
-  subjectFocus[today][subject] = (subjectFocus[today][subject] || 0) + minutes;
+  subjectFocus[today][normalizedSubject] = (subjectFocus[today][normalizedSubject] || 0) + minutes;
   saveAll();
 }
 
@@ -641,14 +713,25 @@ function renderWeeklyReport(){
   const maxValue = Math.max(...values, 10);
   const bars = $qs('#weekly-bars');
   const daysRow = $qs('#weekly-days');
-  bars.innerHTML = values.map(minutes => {
+  bars.innerHTML = dates.map(date => {
+    const minutes = dailyFocus[date] || 0;
+    const dayStats = subjectFocus[date] || {};
+    const subjectEntries = Object.entries(dayStats).sort((a, b) => b[1] - a[1]);
+    const labelText = subjectEntries.length > 0
+      ? subjectEntries.map(([subject, value]) => `${escapeHtml(formatSubjectName(subject))} ${formatMinutes(value)}`).join('<br>')
+      : 'No focus';
     const height = Math.max(10, Math.round((minutes / maxValue) * 100));
-    return `<div class="week-bar" style="height:${height}%"><span>${minutes}</span></div>`;
+    return `<div class="week-bar" style="height:${height}%"><div class="bar-value">${minutes}</div><div class="bar-label">${labelText}</div></div>`;
   }).join('');
   daysRow.innerHTML = dates.map(date => {
     const dayName = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][new Date(date).getDay()];
     return `<div class="week-bar-label">${dayName}</div>`;
   }).join('');
+
+  const details = $qs('#weekly-details');
+  if(details){
+    details.innerHTML = '';
+  }
 
   const thisWeekTotal = values.reduce((sum, value) => sum + value, 0);
   const prevDates = dates.map(date => {
@@ -705,50 +788,170 @@ function renderHomeProductivity(){
 }
 
 function updateFocusTimerDisplay(){
-  $qs('#focus-timer-display').textContent = formatTimeMMSS(focusRemainingSec);
-  if(focusTimerInterval){
-    $qs('#focus-timer-status').textContent = `Working on ${escapeHtml(focusActiveSubject)}`;
-  } else if(focusRemainingSec > 0){
-    $qs('#focus-timer-status').textContent = 'Paused';
-  } else {
-    $qs('#focus-timer-status').textContent = 'Ready to start a session';
+  const timerDisplay = $qs('#focus-timer-display');
+  if(timerDisplay) timerDisplay.textContent = formatTimeMMSS(focusRemainingSec);
+
+  const subjectLine = $qs('#focus-current-subject');
+  const breakInfo = $qs('#focus-break-info');
+
+  if(subjectLine){
+    subjectLine.textContent = focusActiveSubject ? `Subject: ${escapeHtml(focusActiveSubject)}` : 'Subject: not selected';
+  }
+
+  if(breakInfo){
+    if(focusBreakCount > 0 && focusBreakMinutes > 0){
+      const label = focusCurrentPhase === 'break' ? 'Break' : 'Breaks';
+      breakInfo.textContent = `${label}: ${focusBreakCount} × ${focusBreakMinutes}m`;
+    } else {
+      breakInfo.textContent = 'Breaks: not set';
+    }
   }
 }
 
+function startFocusTimerInterval(){
+  if(focusTimerInterval) return;
+  focusTimerInterval = setInterval(() => {
+    tickFocusTimer();
+  }, 500);
+}
+
+function tickFocusTimer(){
+  if(focusTimerMode !== 'running') return;
+  if(!focusEndTime){
+    focusEndTime = Date.now() + focusRemainingSec * 1000;
+    updateFocusTimerDisplay();
+    return;
+  }
+
+  const remaining = Math.max(0, Math.ceil((focusEndTime - Date.now()) / 1000));
+  focusRemainingSec = remaining;
+
+  if(focusRemainingSec > 0){
+    updateFocusTimerDisplay();
+    saveFocusTimerState();
+    return;
+  }
+
+  clearInterval(focusTimerInterval);
+  focusTimerInterval = null;
+
+  if(focusCurrentPhase === 'break'){
+    focusCurrentPhase = 'work';
+    focusRemainingSec = Math.max(1, focusRemainingWorkSeconds);
+    focusEndTime = Date.now() + focusRemainingSec * 1000;
+    focusTimerMode = 'running';
+    startFocusTimerInterval();
+    updateFocusTimerDisplay();
+    saveFocusTimerState();
+    return;
+  }
+
+  focusEndTime = null;
+  focusRemainingSec = 0;
+  focusTimerMode = 'idle';
+  focusCurrentPhase = 'idle';
+  focusCurrentSegmentSeconds = 0;
+  updateFocusTimerDisplay();
+  alert('Focus session complete');
+  addFocusMinutes(focusTimerInitialMinutes, focusActiveSubject);
+  renderHomeProductivity();
+  saveAll();
+  clearFocusTimerState();
+}
+
+function configureFocusBreaks(){
+  const countInput = prompt('Number of breaks?', focusBreakCount || 1);
+  if(countInput === null) return;
+  const durationInput = prompt('Break duration in minutes?', focusBreakMinutes || 5);
+  if(durationInput === null) return;
+
+  const breakCount = parseInt(countInput, 10);
+  const breakMinutes = parseInt(durationInput, 10);
+
+  if(Number.isNaN(breakCount) || breakCount < 0){
+    alert('Enter a valid number of breaks.');
+    return;
+  }
+  if(Number.isNaN(breakMinutes) || breakMinutes < 1){
+    alert('Enter a valid break duration.');
+    return;
+  }
+
+  focusBreakCount = breakCount;
+  focusBreakMinutes = breakMinutes;
+  updateFocusTimerDisplay();
+  saveFocusTimerState();
+}
+
 function startFocusTimer(){
-  if(focusTimerInterval) return alert('A focus timer is already running.');
+  if(focusTimerInterval && focusTimerMode === 'running') return alert('A focus timer is already running.');
+
   const minutesInput = parseInt($qs('#focus-minutes').value, 10);
   const subjectInput = $qs('#focus-subject').value.trim();
 
-  // If there's already remaining time and a subject, treat this as resume
-  if(!(focusRemainingSec > 0 && focusActiveSubject)){
-    if(!minutesInput || minutesInput < 1) return alert('Enter a valid number of minutes.');
-    if(!subjectInput) return alert('Enter a subject before starting the timer.');
-    focusRemainingSec = minutesInput * 60;
-    focusTimerInitialMinutes = minutesInput;
-    focusActiveSubject = subjectInput;
+  if(focusTimerMode === 'paused' && focusRemainingSec > 0 && focusActiveSubject){
+    focusTimerMode = 'running';
+    focusEndTime = Date.now() + focusRemainingSec * 1000;
+    startFocusTimerInterval();
+    updateFocusTimerDisplay();
+    saveFocusTimerState();
+    return;
   }
 
-  // Use an end timestamp to avoid slow setInterval drift and tab throttling
+  if(!minutesInput || minutesInput < 1) return alert('Enter a valid number of minutes.');
+  if(!subjectInput) return alert('Enter a subject before starting the timer.');
+
+  focusTimerInitialMinutes = minutesInput;
+  focusActiveSubject = subjectInput;
+  focusBreakMinutes = focusBreakCount > 0 ? Math.max(1, focusBreakMinutes || 1) : 0;
+  focusBreakCount = Math.max(0, focusBreakCount || 0);
+  focusRemainingWorkSeconds = minutesInput * 60;
+  focusCurrentPhase = 'work';
+  focusCurrentSegmentSeconds = focusRemainingWorkSeconds;
+  focusRemainingSec = focusRemainingWorkSeconds;
+  focusTimerMode = 'running';
   focusEndTime = Date.now() + focusRemainingSec * 1000;
+  startFocusTimerInterval();
   updateFocusTimerDisplay();
-  focusTimerInterval = setInterval(() => {
-    const remaining = Math.max(0, Math.ceil((focusEndTime - Date.now()) / 1000));
-    focusRemainingSec = remaining;
-    if(focusRemainingSec <= 0){
-      clearInterval(focusTimerInterval);
-      focusTimerInterval = null;
-      focusEndTime = null;
-      focusRemainingSec = 0;
-      updateFocusTimerDisplay();
-      alert('Focus session complete');
-      addFocusMinutes(focusTimerInitialMinutes, focusActiveSubject);
-      renderHomeProductivity();
-      saveAll();
-      return;
-    }
-    updateFocusTimerDisplay();
-  }, 500);
+  saveFocusTimerState();
+}
+
+function startBreakFocusTimer(){
+  if(!focusActiveSubject) return alert('Start a focus session first.');
+  if(focusTimerMode === 'running' && focusCurrentPhase === 'break') return;
+  if(!focusTimerInterval && focusTimerMode !== 'paused' && focusTimerMode !== 'running') return alert('Start a focus session first.');
+
+  if(focusTimerInterval){
+    clearInterval(focusTimerInterval);
+    focusTimerInterval = null;
+  }
+
+  if(focusCurrentPhase === 'work' && focusEndTime && focusRemainingSec > 0){
+    const elapsed = Math.max(0, focusCurrentSegmentSeconds - focusRemainingSec);
+    focusRemainingWorkSeconds = Math.max(0, focusRemainingWorkSeconds - elapsed);
+    focusCurrentSegmentSeconds = focusRemainingWorkSeconds;
+  }
+
+  const breakDurationSeconds = Math.max(1, (focusBreakMinutes || 5) * 60);
+  focusCurrentPhase = 'break';
+  focusRemainingSec = breakDurationSeconds;
+  focusEndTime = Date.now() + focusRemainingSec * 1000;
+  focusTimerMode = 'running';
+  startFocusTimerInterval();
+  updateFocusTimerDisplay();
+  saveFocusTimerState();
+}
+
+function pauseFocusTimer(){
+  if(!focusTimerInterval) return;
+  clearInterval(focusTimerInterval);
+  focusTimerInterval = null;
+  focusTimerMode = 'paused';
+  focusRemainingWorkSeconds = Math.max(0, focusRemainingSec);
+  focusCurrentSegmentSeconds = focusRemainingWorkSeconds;
+  focusEndTime = null;
+  updateFocusTimerDisplay();
+  saveFocusTimerState();
 }
 
 function resetFocusTimer(){
@@ -760,20 +963,35 @@ function resetFocusTimer(){
   focusRemainingSec = 0;
   focusTimerInitialMinutes = 0;
   focusActiveSubject = '';
-  $qs('#focus-timer-display').textContent = '00:00';
-  $qs('#focus-timer-status').textContent = 'Ready to start a session';
+  focusTimerMode = 'idle';
+  focusBreakMinutes = 0;
+  focusBreakCount = 0;
+  focusBreaksRemaining = 0;
+  focusRemainingWorkSeconds = 0;
+  focusCurrentPhase = 'idle';
+  focusCurrentSegmentSeconds = 0;
+  updateFocusTimerDisplay();
+  clearFocusTimerState();
 }
 
 function stopFocusTimer(){
-  if(!focusTimerInterval) return;
-  clearInterval(focusTimerInterval);
-  focusTimerInterval = null;
-  // compute remaining seconds based on end timestamp
-  if(focusEndTime){
-    focusRemainingSec = Math.max(0, Math.ceil((focusEndTime - Date.now()) / 1000));
+  if(focusTimerInterval){
+    clearInterval(focusTimerInterval);
+    focusTimerInterval = null;
   }
   focusEndTime = null;
+  focusRemainingSec = 0;
+  focusTimerInitialMinutes = 0;
+  focusActiveSubject = '';
+  focusTimerMode = 'idle';
+  focusBreakMinutes = 0;
+  focusBreakCount = 0;
+  focusBreaksRemaining = 0;
+  focusRemainingWorkSeconds = 0;
+  focusCurrentPhase = 'idle';
+  focusCurrentSegmentSeconds = 0;
   updateFocusTimerDisplay();
+  clearFocusTimerState();
 }
 
 function updateStopwatchDisplay(){
@@ -1281,6 +1499,7 @@ function checkAutoClearTodosOnInit(){
 
 function init(){
   applySettings();
+  restoreFocusTimerState();
   renderWeekGrid();
   // check auto-clear todos at startup
   checkAutoClearTodosOnInit();
@@ -1291,8 +1510,11 @@ function init(){
   renderHome();
 
   document.getElementById('start-focus').addEventListener('click', startFocusTimer);
+  document.getElementById('pause-focus').addEventListener('click', pauseFocusTimer);
+  document.getElementById('break-focus').addEventListener('click', startBreakFocusTimer);
   document.getElementById('stop-focus').addEventListener('click', stopFocusTimer);
   document.getElementById('reset-focus').addEventListener('click', resetFocusTimer);
+  document.getElementById('focus-breaks-btn').addEventListener('click', configureFocusBreaks);
   document.getElementById('start-stopwatch').addEventListener('click', startStopwatch);
   document.getElementById('pause-stopwatch').addEventListener('click', pauseStopwatch);
   document.getElementById('reset-stopwatch').addEventListener('click', resetStopwatch);
