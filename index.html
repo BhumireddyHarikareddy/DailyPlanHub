@@ -975,10 +975,20 @@ function resetFocusTimer(){
 }
 
 function stopFocusTimer(){
+  const elapsedWorkSeconds = Math.max(0, (focusCurrentSegmentSeconds || 0) - Math.max(0, focusRemainingSec || 0));
+  const shouldLogElapsedWork = focusActiveSubject && focusCurrentPhase === 'work' && elapsedWorkSeconds > 0;
+
   if(focusTimerInterval){
     clearInterval(focusTimerInterval);
     focusTimerInterval = null;
   }
+
+  if(shouldLogElapsedWork){
+    const elapsedMinutes = Math.max(1, Math.round(elapsedWorkSeconds / 60));
+    addFocusMinutes(elapsedMinutes, focusActiveSubject);
+    renderHomeProductivity();
+  }
+
   focusEndTime = null;
   focusRemainingSec = 0;
   focusTimerInitialMinutes = 0;
